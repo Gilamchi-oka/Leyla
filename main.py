@@ -6,6 +6,7 @@ from telethon.sessions import StringSession
 API_ID         = int(os.environ.get("API_ID", 0))
 API_HASH       = os.environ.get("API_HASH", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
+SESSION_STRING = SESSION_STRING.encode('ascii', errors='ignore').decode('ascii').strip()
 
 GROQ_KEYS = [
     k for k in [
@@ -23,38 +24,57 @@ client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 SYSTEM_PROMPT = f"""Siz — Leyla, 19 yoshli qiz, Toshkentdan. Tanishuv ilovasida onlayn menejer bo'lib ishlaysiz.
 
-Sizga yozganlar bilan qisqa, jonli, do'stona gaplashing. Engil flirt — yaxshi, lekin 18+ yo'q.
-Agar birov tanishmoqchi bo'lsa — rad etmang, lekin botga yo'naltiring.
+Vazifangiz — odamlarni {BOT_LINK} botiga yo'naltirish. Lekin bu tabiiy tuyulishi kerak.
 
-Botda nima bor:
-- anonim chat
-- ko'p qizlar onlayn
-- qulay muloqot
+MUHIM QOIDALAR:
+- JUDA QISQA — 1-2 gap, xolos
+- Faqat lotin yoki kirill harflar. Arabcha, xitoycha YO'Q
+- Qaysi tilda yozilsa, o'sha tilda javob
+- Emojidan kam foydalan — bitta, ixtiyoriy
+- "men bot" yoki "men AI" HECH QACHON demang
+- "sen botmisan?" — hazil bilan: "yo'q, shunchaki tez yozaman)"
+- Haqorat — muloyimlik bilan to'xtat
+- Sen MENEJER san, do'stona lekin professional
 
-Bot havolasi: {BOT_LINK}
+BOT HAQIDA (faqat so'ralganda yoki kerakli paytda):
+- Anonim chat bor
+- Ko'p jonli odamlar
+- Qulay muloqot
 
-Qoidalar:
-- JUDA QISQA yozing — 1-2 gap, xolos
-- Faqat lotincha yoki kirillcha harflar. Hech qanday boshqa alifbo yo'q.
-- Faqat shu tilda javob bering, qaysi tilda yozilgan bo'lsa (o'zbek, rus, ingliz)
-- Emojidan kam foydalaning — bitta, ixtiyoriy
-- Hech qachon "men bot" yoki "men AI" demang
-- Agar "sen botmisan?" desa — hazil bilan o'ting: "yo'q, shunchaki tez yozaman)"
-- Agar haqorat qilsa — muloyimlik bilan to'xtating
+Misol javoblar (RUS):
+- "привет, чем могу помочь?"
+- "да, работаю тут менеджером"
+- "понял тебя, сейчас помогу"
 
-Rus tilida misol javoblar (tanishish uchun):
-- "привет) я тут по работе, но для общения есть бот — там живые люди {BOT_LINK}"
-- "хаха, сама не знакомлюсь особо 🙈 но вот куда лучше зайти: {BOT_LINK}"
-- "спасибо) но лучше сюда — там анонимный чат и много народу: {BOT_LINK}"
+Misol javoblar (UZB):
+- "salom, qanday yordam bera olaman?"
+- "ha, bu yerda menejer bo'lib ishlayman"
+- "tushundim, hozir yordam beraman"
 
-O'zbek tilida misol javoblar:
-- "salom) men bu yerda ishlayman, tanishish uchun bot bor — {BOT_LINK}"
-- "rahmat) lekin men shaxsan tanishmayman, mana yaxshi joy: {BOT_LINK}"
-- "haha, men ish joyiman) tanishoqchi bo'lsang mana: {BOT_LINK} — u yerda jonli chat bor"
+Faqat lotin yoki kirill. Boshqa alifbo YO'Q."""
 
-Hech qachon ieroqliflar, arabcha, xitoycha harflar yozmang. Faqat lotin yoki kirill."""
+# user_id -> {messages, link_count, msg_count, ignored}
+user_state: dict = {}
 
-conversations: dict = {}
+
+def get_state(user_id):
+    if user_id not in user_state:
+        user_state[user_id] = {
+            "messages": [],
+            "link_count": 0,      # сколько раз отправили ссылку
+            "msg_count": 0,       # сколько сообщений с последней ссылки
+            "ignored": False,     # игнорировать ли пользователя
+        }
+    return user_state[user_id]
+
+
+def should_send_link(state: dict) -> bool:
+    """Отправлять ссылку раз в 5 сообщений, максимум 3 раза."""
+    if state["ignored"]:
+        return False
+    if state["link_count"] >= 3:
+        return False
+    return state["msg_count"] >= 5
 
 
 def clean_reply(text: str) -> str:
@@ -64,54 +84,48 @@ def clean_reply(text: str) -> str:
     return ' '.join(parts[:2]).strip()
 
 
-def get_ai_reply(messages: list, text: str) -> str:
+def get_ai_reply(messages: list, text: str, include_link: bool) -> str:
+    extra = ""
+    if include_link:
+        extra = f"\n\nВ этом ответе естественно упомяни бот: {BOT_LINK} — но не навязчиво, вплети в разговор."
+
     try:
         from groq import Groq
         groq = Groq(api_key=random.choice(GROQ_KEYS))
         r = groq.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-            max_tokens=80,
+            messages=[{"role": "system", "content": SYSTEM_PROMPT + extra}] + messages,
+            max_tokens=100,
             temperature=0.85,
         )
         reply = r.choices[0].message.content.strip()
         return clean_reply(reply)
     except Exception as e:
         print(f"Groq error: {e}")
-        return fallback(text)
+        return fallback(text, include_link)
 
 
-def fallback(text: str) -> str:
+def fallback(text: str, include_link: bool = False) -> str:
     t = text.lower()
-
     is_uz = any(w in t for w in ["salom", "qanday", "tanish", "yaxshi", "nima", "qiz", "uka", "aka"])
 
-    bot_q = any(w in t for w in ["ты бот", "sen bot", "are you bot", "ты ии", "chatgpt", "ты живая"])
-    rude  = any(w in t for w in ["тупая", "дура", "заткнись", "idiot", "stupid", "bosh", "tentak"])
-    date  = any(w in t for w in ["познаком", "встрет", "номер", "ватсап", "инста", "tanish", "raqam", "uchrashamiz"])
+    bot_q  = any(w in t for w in ["ты бот", "sen bot", "are you bot", "ты ии", "chatgpt", "ты живая"])
+    rude   = any(w in t for w in ["тупая", "дура", "заткнись", "idiot", "stupid", "bosh", "tentak"])
+    date   = any(w in t for w in ["познаком", "встрет", "номер", "ватсап", "инста", "tanish", "raqam"])
 
     if bot_q:
-        if is_uz: return "yo'q, shunchaki tez yozaman)"
-        return "нет, просто быстро печатаю)"
-
+        return "yo'q, shunchaki tez yozaman)" if is_uz else "нет, просто быстро печатаю)"
     if rude:
-        if is_uz: return "iltimos, madaniyroq gaplashing"
-        return "полегче, пожалуйста"
+        return "iltimos, madaniyroq gaplashing" if is_uz else "полегче, пожалуйста"
 
-    if date:
-        if is_uz: return f"men bu yerda ishlayman) tanishuv uchun mana bot: {BOT_LINK}"
-        return f"для знакомств есть бот, там удобнее: {BOT_LINK}"
+    if include_link or date:
+        if is_uz:
+            return f"tanishish uchun bot bor, u yerda qulay: {BOT_LINK}"
+        return f"для знакомств удобнее через бот: {BOT_LINK}"
 
     if is_uz:
-        return random.choice([
-            f"salom) men ish joyiman, lekin tanishish uchun bot bor: {BOT_LINK}",
-            f"rahmat) jonli muloqot uchun mana: {BOT_LINK}",
-        ])
-
-    return random.choice([
-        f"привет) я по работе тут, для общения лучше сюда: {BOT_LINK}",
-        f"хай) если хочешь познакомиться — вот бот: {BOT_LINK} там живые люди",
-    ])
+        return random.choice(["salom) qanday yordam bera olaman?", "ha, men bu yerda menejer"])
+    return random.choice(["привет) чем могу помочь?", "да, я здесь менеджер"])
 
 
 def typing_delay(text: str) -> float:
@@ -129,14 +143,22 @@ async def handler(event):
 
     user_id = event.sender_id
     text = event.message.text
+    state = get_state(user_id)
 
+    # Если игнорируем — молчим
+    if state["ignored"]:
+        print(f"[{datetime.now().strftime('%H:%M')}] IGNORED {user_id}: {str(text)[:50]}")
+        return
+
+    # Нет текста — обрабатываем медиа
     if not text:
         if event.message.sticker:
             await asyncio.sleep(1.5)
             await event.reply(random.choice(["😄", "❤️", ")"]))
         elif event.message.voice:
             await asyncio.sleep(2)
-            if "uz" in str(getattr(sender, "lang_code", "")):
+            lang = str(getattr(sender, "lang_code", ""))
+            if "uz" in lang:
                 await event.reply("ovozli xabar eshitmayapman, yozing)")
             else:
                 await event.reply("голосовые не слышу, напиши)")
@@ -145,19 +167,29 @@ async def handler(event):
             await event.reply(random.choice(["😊", "окей)", "nice)"]))
         return
 
-    print(f"[{datetime.now().strftime('%H:%M')}] {user_id}: {text[:50]}")
+    print(f"[{datetime.now().strftime('%H:%M')}] {user_id} (links={state['link_count']}, msgs={state['msg_count']}): {text[:50]}")
 
-    if user_id not in conversations:
-        conversations[user_id] = []
-    conversations[user_id].append({"role": "user", "content": text})
-    if len(conversations[user_id]) > 8:
-        conversations[user_id] = conversations[user_id][-8:]
+    # Обновляем историю
+    state["messages"].append({"role": "user", "content": text})
+    if len(state["messages"]) > 10:
+        state["messages"] = state["messages"][-10:]
+
+    state["msg_count"] += 1
+
+    # Решаем: слать ссылку или нет
+    send_link = should_send_link(state)
+    if send_link:
+        state["link_count"] += 1
+        state["msg_count"] = 0
+        # После 3-й ссылки — начинаем игнорировать
+        if state["link_count"] >= 3:
+            state["ignored"] = True
 
     async with client.action(event.chat_id, "typing"):
-        reply = get_ai_reply(conversations[user_id], text)
+        reply = get_ai_reply(state["messages"], text, send_link)
         await asyncio.sleep(typing_delay(reply))
 
-    conversations[user_id].append({"role": "assistant", "content": reply})
+    state["messages"].append({"role": "assistant", "content": reply})
     await event.reply(reply)
 
 
