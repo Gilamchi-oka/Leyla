@@ -7,6 +7,7 @@ API_ID         = int(os.environ.get("API_ID", 0))
 API_HASH       = os.environ.get("API_HASH", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
 SESSION_STRING = SESSION_STRING.encode('ascii', errors='ignore').decode('ascii').strip()
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 GROQ_KEYS = [
     k for k in [
@@ -251,7 +252,7 @@ async def handler(event):
         reply = get_ai_reply(state["messages"], text, send_link)
         await asyncio.sleep(typing_delay(reply))
 
-    state["messages"].append({"role": "assistant", "content": reply})
+   state["messages"].append({"role": "assistant", "content": reply})
     await event.reply(reply)
 
 
@@ -260,6 +261,7 @@ async def main():
     me = await client.get_me()
     print(f"Leyla ishga tushdi: @{me.username}")
     await client.run_until_disconnected()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
