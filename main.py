@@ -43,7 +43,7 @@ BOT HAQIDA (faqat so'ralganda yoki 5+ xabarda bir marta):
 - Ko'p jonli odamlar
 - Qulay muloqot
 
-Misol javoblar (RUS) — xilma-xil bo'lsin:
+Misol javoblar (RUS):
 - "привет, как дела?"
 - "интересно, расскажи подробнее"
 - "понял, и что дальше?"
@@ -51,7 +51,7 @@ Misol javoblar (RUS) — xilma-xil bo'lsin:
 - "хм, а что имеешь в виду?"
 - "звучит неплохо, а ты откуда?"
 
-Misol javoblar (UZB) — xilma-xil bo'lsin:
+Misol javoblar (UZB):
 - "salom, qanday kun o'tyapti?"
 - "qiziq, ko'proq ayt-chi"
 - "ha, tushundim — yana nima?"
@@ -61,7 +61,6 @@ Misol javoblar (UZB) — xilma-xil bo'lsin:
 
 Faqat lotin yoki kirill. Boshqa alifbo YO'Q."""
 
-# user_id -> {messages, link_count, msg_count, ignored}
 user_state: dict = {}
 
 
@@ -77,7 +76,6 @@ def get_state(user_id):
 
 
 def should_send_link(state: dict) -> bool:
-    """Отправлять ссылку раз в 5 сообщений, максимум 3 раза."""
     if state["ignored"]:
         return False
     if state["link_count"] >= 3:
@@ -86,18 +84,12 @@ def should_send_link(state: dict) -> bool:
 
 
 def clean_reply(text: str) -> str:
-    # Убираем нежелательные алфавиты
     text = re.sub(r'[\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0900-\u097F]+', '', text)
-    # Убираем лишние пробелы
     text = re.sub(r'\s{2,}', ' ', text).strip()
-    # Убираем кавычки-ответы типа "> цитата\n"
     text = re.sub(r'^>.*\n?', '', text, flags=re.MULTILINE).strip()
-    # Убираем звёздочки (markdown bold/italic)
     text = re.sub(r'\*+', '', text).strip()
-    # Берём только первые 2 предложения, но сохраняем смысл
     sentences = re.split(r'(?<=[.!?])\s+', text)
     result = ' '.join(sentences[:2]).strip()
-    # Если слишком короткий результат — берём оригинал (до 150 символов)
     if len(result) < 5:
         result = text[:150].strip()
     return result
@@ -108,11 +100,9 @@ def get_ai_reply(messages: list, text: str, include_link: bool) -> str:
     if include_link:
         extra = (
             f"\n\nВ этом ответе ЕСТЕСТВЕННО упомяни бот {BOT_LINK} — "
-            "будто это само собой разумеется, без рекламного тона. "
-            "Например: 'кстати, у нас тут бот есть удобный — там проще общаться'"
+            "будто это само собой разумеется, без рекламного тона."
         )
 
-    # Добавляем случайный seed в промпт чтобы модель не давала одинаковые ответы
     variety_hint = random.choice([
         "\n[Отвечай по-другому чем обычно, будь живой]",
         "\n[Задай встречный вопрос]",
@@ -128,7 +118,7 @@ def get_ai_reply(messages: list, text: str, include_link: bool) -> str:
             model="llama-3.3-70b-versatile",
             messages=[{"role": "system", "content": SYSTEM_PROMPT + extra + variety_hint}] + messages[-10:],
             max_tokens=80,
-            temperature=random.uniform(0.85, 1.05),  # случайная температура для разнообразия
+            temperature=random.uniform(0.85, 1.05),
         )
         reply = r.choices[0].message.content.strip()
         return clean_reply(reply)
@@ -137,7 +127,6 @@ def get_ai_reply(messages: list, text: str, include_link: bool) -> str:
         return fallback(text, include_link)
 
 
-# Пул разнообразных fallback-ответов
 FALLBACK_RU = [
     "привет) как дела?",
     "да, слушаю тебя",
@@ -164,13 +153,13 @@ FALLBACK_UZ = [
     "o'zing qayerdansiz?",
 ]
 
+
 def fallback(text: str, include_link: bool = False) -> str:
     t = text.lower()
     is_uz = any(w in t for w in ["salom", "qanday", "tanish", "yaxshi", "nima", "qiz", "uka", "aka", "sen"])
-
-    bot_q  = any(w in t for w in ["ты бот", "sen bot", "are you bot", "ты ии", "chatgpt", "ты живая", "bot"])
-    rude   = any(w in t for w in ["тупая", "дура", "заткнись", "idiot", "stupid", "bosh", "tentak"])
-    date   = any(w in t for w in ["познаком", "встрет", "номер", "ватсап", "инста", "tanish", "raqam", "meet"])
+    bot_q = any(w in t for w in ["ты бот", "sen bot", "are you bot", "ты ии", "chatgpt", "ты живая", "bot"])
+    rude  = any(w in t for w in ["тупая", "дура", "заткнись", "idiot", "stupid", "bosh", "tentak"])
+    date  = any(w in t for w in ["познаком", "встрет", "номер", "ватсап", "инста", "tanish", "raqam", "meet"])
 
     if bot_q:
         return "yo'q, shunchaki tez yozaman)" if is_uz else "нет, просто быстро печатаю)"
@@ -188,7 +177,6 @@ def fallback(text: str, include_link: bool = False) -> str:
             f"кстати, у нас бот есть — там народу больше: {BOT_LINK}",
         ])
 
-    # Основные случайные ответы
     if is_uz:
         return random.choice(FALLBACK_UZ)
     return random.choice(FALLBACK_RU)
@@ -196,8 +184,10 @@ def fallback(text: str, include_link: bool = False) -> str:
 
 def typing_delay(text: str) -> float:
     words = len(text.split())
-    if words <= 4:  return random.uniform(1.0, 2.0)
-    if words <= 10: return random.uniform(2.0, 3.5)
+    if words <= 4:
+        return random.uniform(1.0, 2.0)
+    if words <= 10:
+        return random.uniform(2.0, 3.5)
     return random.uniform(3.5, 5.5)
 
 
@@ -215,7 +205,6 @@ async def handler(event):
         print(f"[{datetime.now().strftime('%H:%M')}] IGNORED {user_id}: {str(text)[:50]}")
         return
 
-    # Нет текста — медиа
     if not text:
         if event.message.sticker:
             await asyncio.sleep(1.5)
@@ -234,7 +223,6 @@ async def handler(event):
 
     print(f"[{datetime.now().strftime('%H:%M')}] {user_id} (links={state['link_count']}, msgs={state['msg_count']}): {text[:50]}")
 
-    # Обновляем историю
     state["messages"].append({"role": "user", "content": text})
     if len(state["messages"]) > 20:
         state["messages"] = state["messages"][-20:]
@@ -252,7 +240,7 @@ async def handler(event):
         reply = get_ai_reply(state["messages"], text, send_link)
         await asyncio.sleep(typing_delay(reply))
 
-   state["messages"].append({"role": "assistant", "content": reply})
+    state["messages"].append({"role": "assistant", "content": reply})
     await event.reply(reply)
 
 
